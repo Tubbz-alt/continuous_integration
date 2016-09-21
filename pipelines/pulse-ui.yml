@@ -1,0 +1,228 @@
+# Config templates, for use below
+quay-credentials: &quay-credentials
+  tag: latest
+  insecure_registries: ["quay.io"]
+  username: {{quay-username}}
+  password: {{quay-password}}
+  email: .
+
+docker-image-source-defaults: &docker-image-defaults
+  <<: *quay-credentials
+  build_cache:
+    host: {{build-cache-host}}
+    user: {{build-cache-username}}
+    private_key: {{build-cache-private-key}}
+    remote_path: {{build-cache-dir}}
+
+git-defaults: &git-defaults
+  branch: develop
+  private_key: {{github-private-key}}
+
+# Resource types and resources
+resource_types:
+- name: docker-image
+  type: docker-image
+  source:
+    <<: *quay-credentials
+    repository: quay.io/ellerycrane/docker-image-resource
+
+resources:
+- name: cloud-ui-client-app
+  type: git
+  source:
+    <<: *git-defaults
+    uri: git@github.com:pwnieexpress/cloud-ui-client-app.git
+    branch: {{branch-to-build}}
+
+- name: build-triggers
+  type: git
+  source:
+    <<: *git-defaults
+    uri: git@gist.github.com:70e604111dcfb97f128bf7b0f70e46ff.git
+    branch: master
+
+- name: trigger-build-dependencies
+  type: git
+  source:
+    <<: *git-defaults
+    check_every: 5s
+    uri: git@gist.github.com:70e604111dcfb97f128bf7b0f70e46ff.git
+    branch: master
+    paths:
+      - ./deps.txt
+
+- name: trigger-build-rc
+  type: git
+  source:
+    <<: *git-defaults
+    check_every: 5s
+    uri: git@gist.github.com:70e604111dcfb97f128bf7b0f70e46ff.git
+    branch: master
+    paths:
+      - ./build.txt
+
+- name: alpine-node-docker-image
+  type: docker-image
+  source:
+    repository: mhart/alpine-node
+
+- name: git-buildroot-image
+  type: docker-image
+  source:
+    repository: concourse/buildroot
+    tag: git
+
+- name: pulse-ui-build-env
+  type: docker-image
+  source:
+    <<: *docker-image-defaults
+    repository: quay.io/ellerycrane/pulse-ui-build-env
+    tag: {{build-env-tag}}
+
+- name: busybox-ssh
+  type: docker-image
+  source:
+    <<: *docker-image-defaults
+    repository: quay.io/ellerycrane/busyboxssh
+
+- name: version
+  type: semver
+  source:
+    bucket: pwnie-build-artifacts
+    key: {{semver-key}}
+    access_key_id: {{s3-access-key-id}}
+    secret_access_key: {{s3-secret-access-key}}
+    initial_version: 1.0.0
+
+- name: pulse-ui-rc
+  type: s3
+  source:
+    bucket: pwnie-build-artifacts
+    regexp: pulse-ui-dev-(.*).txz
+    access_key_id: {{s3-access-key-id}}
+    secret_access_key: {{s3-secret-access-key}}
+
+# Pipeline jobs
+jobs:
+- name: update-build-triggers
+  serial: true
+  plan:
+  - aggregate:
+    - get: cloud-ui-client-app
+      trigger: true
+    - get: build-triggers
+    - get: git-buildroot-image
+      params: {save: true}
+  - task: update-build-triggers
+    file: cloud-ui-client-app/ci/update-build-triggers.yml
+    image: git-buildroot-image
+    input_mapping: {base-repo: cloud-ui-client-app, build-triggers: build-triggers}
+    params: {dependency_paths: {{dependency-paths}}}
+  - put: build-triggers
+    params: {repository: updated-build-triggers}
+
+- name: build-dependencies
+  serial: true
+  plan:
+  - aggregate:
+    - get: trigger-build-dependencies
+      trigger: true
+    - get: build-triggers
+      passed: [update-build-triggers]
+    - get: cloud-ui-client-app
+#      passed: [update-build-triggers]
+    - get: alpine-node-docker-image
+      params: {save: true}
+    - get: git-buildroot-image
+      params: {save: true}
+  - put: pulse-ui-build-env
+    params:
+      build: cloud-ui-client-app
+      dockerfile: cloud-ui-client-app/ci/Dockerfile
+      load_base: alpine-node-docker-image
+      cache: true
+      tag_as_latest: true
+    get_params: {skip_download: true}
+  - task: update-build-triggers
+    file: cloud-ui-client-app/ci/update-build-triggers.yml
+    image: git-buildroot-image
+    input_mapping: {base-repo: cloud-ui-client-app, build-triggers: build-triggers}
+  - put: trigger-build-rc
+    params: {repository: updated-build-triggers}
+
+- name: build-rc
+  serial: true
+  serial_groups: [version]
+  plan:
+  - aggregate:
+    - get: trigger-build-rc
+      trigger: true
+    - get: cloud-ui-client-app
+      passed: [update-build-triggers]
+    - get: pulse-ui-build-env
+      params: {save: true}
+    - get: version
+      params: {pre: rc}
+  - task: package
+    image: pulse-ui-build-env
+    params: {ENVIRONMENT: {{deploy-environment}}}
+    config:
+      platform: linux
+      inputs:
+        - name: cloud-ui-client-app
+        - name: version
+      outputs:
+        - name: built-resource
+      run:
+        path: ./cloud-ui-client-app/ci/package-for-deploy.sh
+  - put: pulse-ui-rc
+    params: {file: built-resource/pulse-ui-dev-*.txz}
+  - put: version
+    params: {file: version/number}
+
+- name: deploy-rc
+  serial: true
+  serial_groups: [version]
+  plan:
+  - aggregate:
+    - get: cloud-ui-client-app
+      passed: [build-rc]
+    - get: busybox-ssh
+      params: {save: true}
+    - get: pulse-ui-build-env
+      params: {save: true}
+    - get: pulse-ui-rc
+      passed: [build-rc]
+      trigger: true
+  - task: deploy
+    image: busybox-ssh
+    config:
+      platform: linux
+      inputs:
+        - name: cloud-ui-client-app
+        - name: pulse-ui-rc
+      run:
+        path: ./cloud-ui-client-app/ci/deploy-built-resource.sh
+    params:
+      #These are nx1q and nx1bq; for some reason dns resolution isn't working on concourse1bq
+      NAT_HOST: {{nat-host}}
+      NAT_USERNAME: {{nat-username}}
+      NAT_PRIVATE_KEY: {{nat-private-key}}
+      REMOTE_HOSTS: {{remote-hosts}} #nx1q nx1bq #10.105.37.217 10.105.110.0
+      REMOTE_DIR: /var/www/dist
+      REMOTE_USERNAME: {{remote-username}}
+      REMOTE_PRIVATE_KEY: {{remote-private-key}}
+      ENVIRONMENT: {{deploy-environment}}
+  - task: notify
+    image: pulse-ui-build-env
+    config:
+      platform: linux
+      inputs:
+        - name: cloud-ui-client-app
+        - name: pulse-ui-rc
+      run:
+        path: ./cloud-ui-client-app/ci/notify-deploy-success.sh
+    params:
+      FLOW_TOKEN: {{flow-token}}
+      USERS_TO_NOTIFY: {{users-to-notify}}
+      ENVIRONMENT: {{deploy-environment}}
