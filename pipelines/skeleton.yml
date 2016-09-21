@@ -40,6 +40,7 @@ resources:
 
 - name: ci
   type: git
+  check_every: 10s
   source:
     <<: *git-defaults
     uri: git@github.com:pwnieexpress/continuous_integration.git
@@ -68,9 +69,9 @@ resources:
 
 - name: trigger-build-dependencies
   type: git
+  check_every: 5s
   source:
     <<: *git-defaults
-    check_every: 5s
     uri: {{build-triggers-repo}}
     branch: master
     paths:
@@ -78,9 +79,9 @@ resources:
 
 - name: trigger-build-app
   type: git
+  check_every: 5s
   source:
     <<: *git-defaults
-    check_every: 5s
     uri: {{build-triggers-repo}}
     branch: master
     paths:
@@ -174,6 +175,7 @@ jobs:
       passed: [update-build-triggers]
     - get: {{dependencies-resource-name}}
       params: {save: true}
+    - get: ci
     - get: version
       params: {pre: rc}
   - task: package
