@@ -12,6 +12,7 @@ pushd app-resource
     echo "No dependency_paths param specified; only updating build.txt"
     dependency_diff=
   else
+    touch ../build-triggers-resource/deps.txt
     for dependency_path in $dependency_paths
     do
       dependency_commit=$(git rev-list -1 HEAD ${dependency_path})
