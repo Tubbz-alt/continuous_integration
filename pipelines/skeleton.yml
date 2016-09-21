@@ -146,6 +146,7 @@ jobs:
     - get: {{app-resource-name}}
     - get: {{dependencies-image-base-resource-name}}
       params: {save: true}
+    - get: ci
     - get: git-buildroot-image
       params: {save: true}
   - put: {{dependencies-resource-name}}
@@ -186,7 +187,7 @@ jobs:
       outputs:
         - name: built-resource
       run:
-        path: ./{{app-resource-name}}/ci/package-for-deploy.sh
+        path: ./ci/tasks/package-for-deploy.sh
   - put: pulse-ui-rc
     params: {file: built-resource/pulse-ui-{{deploy-environment}}-*.txz}
   - put: version
@@ -203,6 +204,7 @@ jobs:
       params: {save: true}
     - get: {{dependencies-resource-name}}
       params: {save: true}
+    - get: ci
     - get: pulse-ui-rc
       passed: [build-app]
       trigger: true
@@ -214,7 +216,7 @@ jobs:
         - name: {{app-resource-name}}
         - name: pulse-ui-rc
       run:
-        path: ./{{app-resource-name}}/ci/deploy-built-resource.sh
+        path: ./ci/tasks/deploy-built-resource.sh
     params:
       #These are nx1q and nx1bq; for some reason dns resolution isn't working on concourse1bq
       NAT_HOST: {{nat-host}}
@@ -233,7 +235,7 @@ jobs:
         - name: {{app-resource-name}}
         - name: pulse-ui-rc
       run:
-        path: ./{{app-resource-name}}/ci/notify-deploy-success.sh
+        path: ./ci/tasks/notify-deploy-success.sh
     params:
       FLOW_TOKEN: {{flow-token}}
       USERS_TO_NOTIFY: {{users-to-notify}}
