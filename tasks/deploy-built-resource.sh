@@ -52,19 +52,25 @@ if [ -n "$REMOTE_HOSTS" ]; then
   do
     echo "Deploying to remote host ${REMOTE_HOST}"
 
-    PROXY_CMD=
     if [ -n "$NAT_HOST" ]; then
       echo "Setting up remote proxy through NAT host ${NAT_HOST} with user ${NAT_USERNAME}"
       PROXY_CMD="-o ProxyCommand ssh -v ${NAT_USERNAME}@${NAT_HOST} -p ${NAT_PORT} '/usr/bin/nc ${REMOTE_HOST} ${REMOTE_PORT}'"
+      echo "Ensuring staging dir (${STAGING_DIR}) exists on remote host"
+      ssh "${PROXY_CMD}" ${REMOTE_USERNAME}@${REMOTE_HOST} "/bin/bash -c 'mkdir -p ${STAGING_DIR}'"
+      echo "Copying ${TARFILE} and deploy-ui.sh to remote host"
+      scp "${PROXY_CMD}" ${BUILT_RESOURCE}/${TARFILE} ${INPUT_DIR}/deploy-ui.sh ${REMOTE_USERNAME}@${REMOTE_HOST}:${STAGING_DIR}
+      echo "Executing deploy-ui.sh on remote host"
+      ssh "${PROXY_CMD}" ${REMOTE_USERNAME}@${REMOTE_HOST} "/bin/bash -c 'sudo ${STAGING_DIR}/deploy-ui.sh ${STAGED_TARFILE} ${REMOTE_DIR}; rm ${STAGING_DIR}/deploy-ui.sh'"
+      echo "Deploy to remote host ${REMOTE_HOST} complete"
+    else
+      echo "Ensuring staging dir (${STAGING_DIR}) exists on remote host"
+      ssh ${REMOTE_USERNAME}@${REMOTE_HOST} "/bin/bash -c 'mkdir -p ${STAGING_DIR}'"
+      echo "Copying ${TARFILE} and deploy-ui.sh to remote host"
+      scp ${BUILT_RESOURCE}/${TARFILE} ${INPUT_DIR}/deploy-ui.sh ${REMOTE_USERNAME}@${REMOTE_HOST}:${STAGING_DIR}
+      echo "Executing deploy-ui.sh on remote host"
+      ssh ${REMOTE_USERNAME}@${REMOTE_HOST} "/bin/bash -c 'sudo ${STAGING_DIR}/deploy-ui.sh ${STAGED_TARFILE} ${REMOTE_DIR}; rm ${STAGING_DIR}/deploy-ui.sh'"
+      echo "Deploy to remote host ${REMOTE_HOST} complete"
     fi
-
-    echo "Ensuring staging dir (${STAGING_DIR}) exists on remote host"
-    ssh "${PROXY_CMD}" ${REMOTE_USERNAME}@${REMOTE_HOST} "/bin/bash -c 'mkdir -p ${STAGING_DIR}'"
-    echo "Copying ${TARFILE} and deploy-ui.sh to remote host"
-    scp "${PROXY_CMD}" ${BUILT_RESOURCE}/${TARFILE} ${INPUT_DIR}/deploy-ui.sh ${REMOTE_USERNAME}@${REMOTE_HOST}:${STAGING_DIR}
-    echo "Executing deploy-ui.sh on remote host"
-    ssh "${PROXY_CMD}" ${REMOTE_USERNAME}@${REMOTE_HOST} "/bin/bash -c 'sudo ${STAGING_DIR}/deploy-ui.sh ${STAGED_TARFILE} ${REMOTE_DIR}; rm ${STAGING_DIR}/deploy-ui.sh'"
-    echo "Deploy to remote host ${REMOTE_HOST} complete"
   done
 fi
 
