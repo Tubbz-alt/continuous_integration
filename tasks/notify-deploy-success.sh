@@ -13,7 +13,12 @@ cd ./cloud-ui-client-app
 
 REPO=`git remote -v | head -n 1 | awk -v N=2 '{print $N}'`
 COMMIT=`git rev-parse HEAD`
-MESSAGE=`git log -1 --format=format:%B`
+MESSAGE=`git log -1 --format=format:%B | tr -d '\r\n'`
+if [ "${#MESSAGE}" -gt "150" ]; then
+  MESSAGE=`echo ${MESSAGE} | cut -c -150`
+  MESSAGE="${MESSAGE}..."
+fi
+
 AUTHOR=`git log -1 --format=format:%an`
 AUTHOR_DATE=`git log -1 --format=format:%ai`
 BRANCH=`git show-ref --heads | sed -n "s/^$(git rev-parse HEAD) refs\/heads\/\(.*\)/\1/p"`
