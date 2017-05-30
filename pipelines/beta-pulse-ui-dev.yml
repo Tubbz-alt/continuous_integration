@@ -172,7 +172,6 @@ jobs:
     - get: trigger-build-app
       trigger: true
     - get: {{app-resource-name}}
-      passed: [update-build-triggers]
     - get: {{dependencies-resource-name}}
       params: {save: true}
     - get: ci

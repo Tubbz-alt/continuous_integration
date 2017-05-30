@@ -151,20 +151,21 @@ jobs:
     - get: git-buildroot-image
       params: {save: true}
   - task: build-github-key
-    image: busybox-ssh
+    image: git-buildroot-image
+    params: {GITHUB_PRIVATE_KEY: {{github-private-key}}}
     config:
       platform: linux
       inputs:
         - name: ci
+        - name: {{app-resource-name}}
       outputs:
-        - name: built-github-key
+        - name: app-with-github-key
+          path: built-github-key
       run:
         path: ./ci/tasks/build-github-key.sh
-      params:
-        GITHUB_PRIVATE_KEY: {{github-private-key}}
   - put: {{dependencies-resource-name}}
     params:
-      build: {{app-resource-name}}
+      build: app-with-github-key
       dockerfile: {{dependencies-dockerfile-location}}
       load_base: {{dependencies-image-base-resource-name}}
       cache: true

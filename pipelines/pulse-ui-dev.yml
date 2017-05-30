@@ -150,6 +150,19 @@ jobs:
     - get: ci
     - get: git-buildroot-image
       params: {save: true}
+  - task: build-github-key
+    image: git-buildroot-image
+    params: {GITHUB_PRIVATE_KEY: {{github-private-key}}}
+    config:
+      platform: linux
+      inputs:
+        - name: ci
+        - name: {{app-resource-name}}
+      outputs:
+        - name: app-with-github-key
+          path: built-github-key
+      run:
+        path: ./ci/tasks/build-github-key.sh
   - put: {{dependencies-resource-name}}
     params:
       build: {{app-resource-name}}
@@ -190,7 +203,7 @@ jobs:
       outputs:
         - name: built-resource
       run:
-        path: ./ci/tasks/package-for-deploy.sh
+        path: ./cloud-ui-client-app/ci/package-for-deploy.sh
   - put: pulse-ui-rc
     params: {file: built-resource/pulse-ui-dev-*.txz}
   - put: version
