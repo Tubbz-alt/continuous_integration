@@ -1,0 +1,248 @@
+# Config templates, for use below
+quay-credentials: &quay-credentials
+  tag: latest
+  insecure_registries: ["quay.io"]
+  username: {{quay-username}}
+  password: {{quay-password}}
+  email: .
+
+docker-image-source-defaults: &docker-image-defaults
+  <<: *quay-credentials
+  build_cache:
+    host: {{build-cache-host}}
+    user: {{build-cache-username}}
+    private_key: {{build-cache-private-key}}
+    remote_path: {{build-cache-dir}}
+
+git-defaults: &git-defaults
+  branch: develop
+  private_key: {{github-private-key}}
+
+update-build-triggers: &update-build-triggers
+  file: ci/tasks/update-build-triggers.yml
+  image: git-buildroot-image
+  input_mapping: {app-resource: {{app-resource-name}}, build-triggers-resource: build-triggers, ci-resource: ci}
+
+# Resource types and resources
+resource_types:
+- name: docker-image
+  type: docker-image
+  source:
+    <<: *quay-credentials
+    repository: quay.io/ellerycrane/docker-image-resource
+
+resources:
+- name: git-buildroot-image
+  type: docker-image
+  source:
+    repository: concourse/buildroot
+    tag: git
+
+- name: ci
+  type: git
+  check_every: 10s
+  source:
+    <<: *git-defaults
+    uri: git@github.com:pwnieexpress/continuous_integration.git
+    branch: master
+
+- name: {{app-resource-name}}
+  type: git
+  source:
+    <<: *git-defaults
+    uri: {{app-repo}}
+    branch: {{app-repo-branch}}
+
+- name: {{dependencies-resource-name}}
+  type: docker-image
+  source:
+    <<: *docker-image-defaults
+    repository: {{dependencies-image-docker-repo}}
+    tag: {{dependencies-image-tag}}
+
+- name: build-triggers
+  type: git
+  source:
+    <<: *git-defaults
+    uri: {{build-triggers-repo}}
+    branch: master
+
+- name: trigger-build-dependencies
+  type: git
+  check_every: 5s
+  source:
+    <<: *git-defaults
+    uri: {{build-triggers-repo}}
+    branch: master
+    paths:
+      - ./deps.txt
+
+- name: trigger-build-app
+  type: git
+  check_every: 5s
+  source:
+    <<: *git-defaults
+    uri: {{build-triggers-repo}}
+    branch: master
+    paths:
+      - ./build.txt
+
+- name: {{dependencies-image-base-resource-name}}
+  type: docker-image
+  source:
+    repository: {{dependencies-image-base-docker-repo}}
+    tag: {{dependencies-image-base-tag}}
+
+# Pipeline-specific resources
+
+- name: busybox-ssh
+  type: docker-image
+  source:
+    <<: *docker-image-defaults
+    repository: quay.io/ellerycrane/busyboxssh
+
+- name: version
+  type: semver
+  source:
+    bucket: pwnie-build-artifacts
+    key: {{semver-key}}
+    access_key_id: {{s3-access-key-id}}
+    secret_access_key: {{s3-secret-access-key}}
+    initial_version: 1.0.0
+
+- name: beta-pulse-ui-rc
+  type: s3
+  source:
+    bucket: pwnie-build-artifacts
+    regexp: beta-pulse-ui-qa-(.*).txz
+    access_key_id: {{s3-access-key-id}}
+    secret_access_key: {{s3-secret-access-key}}
+
+# Pipeline jobs
+jobs:
+- name: update-build-triggers
+  serial: true
+  plan:
+  - aggregate:
+    - get: {{app-resource-name}}
+      trigger: true
+    - get: ci
+    - get: build-triggers
+    - get: git-buildroot-image
+      params: {save: true}
+  - task: update-build-triggers
+    <<: *update-build-triggers
+    params: {dependency_paths: {{dependency-paths}}}
+  - put: build-triggers
+    params: {repository: updated-build-triggers}
+
+- name: build-dependencies
+  serial: true
+  plan:
+  - aggregate:
+    - get: trigger-build-dependencies
+      trigger: true
+    - get: build-triggers
+      passed: [update-build-triggers]
+    - get: {{app-resource-name}}
+    - get: {{dependencies-image-base-resource-name}}
+      params: {save: true}
+    - get: ci
+    - get: git-buildroot-image
+      params: {save: true}
+  - put: {{dependencies-resource-name}}
+    params:
+      build: {{app-resource-name}}
+      dockerfile: {{dependencies-dockerfile-location}}
+      load_base: {{dependencies-image-base-resource-name}}
+      cache: true
+      tag_as_latest: true
+    get_params: {skip_download: true}
+  - task: update-build-triggers
+    <<: *update-build-triggers
+  - put: trigger-build-app
+    params: {repository: updated-build-triggers}
+
+# TODO: Fill in this job with app specific config
+- name: build-app
+  serial: true
+  serial_groups: [version]
+  plan:
+  - aggregate:
+    - get: trigger-build-app
+      trigger: true
+    - get: {{app-resource-name}}
+    - get: {{dependencies-resource-name}}
+      params: {save: true}
+    - get: ci
+    - get: version
+      params: {pre: rc}
+  - task: package
+    image: {{dependencies-resource-name}}
+    params: {ENVIRONMENT: {{deploy-environment}}}
+    config:
+      platform: linux
+      inputs:
+        - name: {{app-resource-name}}
+        - name: version
+        - name: ci
+      outputs:
+        - name: built-resource
+      run:
+        path: ./shadowfax/ci/package-for-deploy.sh
+  - put: beta-pulse-ui-rc
+    params: {file: built-resource/beta-pulse-ui-qa-*.txz}
+  - put: version
+    params: {file: version/number}
+
+- name: deploy-rc
+  serial: true
+  serial_groups: [version]
+  plan:
+  - aggregate:
+    - get: {{app-resource-name}}
+      passed: [build-app]
+    - get: busybox-ssh
+      params: {save: true}
+    - get: {{dependencies-resource-name}}
+      params: {save: true}
+    - get: ci
+    - get: beta-pulse-ui-rc
+      passed: [build-app]
+      trigger: true
+  - task: deploy
+    image: busybox-ssh
+    input_mapping: {pulse-ui-rc: beta-pulse-ui-rc}
+    config:
+      platform: linux
+      inputs:
+        - name: {{app-resource-name}}
+        - name: pulse-ui-rc
+        - name: ci
+      run:
+        path: ./ci/tasks/deploy-built-resource.sh
+    params:
+      #These are nx1q and nx1bq; for some reason dns resolution isn't working on concourse1bq
+      NAT_HOST: {{nat-host}}
+      NAT_USERNAME: {{nat-username}}
+      NAT_PRIVATE_KEY: {{nat-private-key}}
+      REMOTE_HOSTS: {{remote-hosts}} #nx1q nx1bq #10.105.37.217 10.105.110.0
+      REMOTE_DIR: /var/www/beta
+      REMOTE_USERNAME: {{remote-username}}
+      REMOTE_PRIVATE_KEY: {{remote-private-key}}
+      ENVIRONMENT: {{deploy-environment}}
+  - task: notify
+    image: {{dependencies-resource-name}}
+    input_mapping: {pulse-ui-rc: beta-pulse-ui-rc, cloud-ui-client-app: {{app-resource-name}}}
+    config:
+      platform: linux
+      inputs:
+        - name: cloud-ui-client-app
+        - name: pulse-ui-rc
+        - name: ci
+      run:
+        path: ./ci/tasks/notify-deploy-success.sh
+    params:
+      FLOW_TOKEN: {{flow-token}}
+      USERS_TO_NOTIFY: {{users-to-notify}}
+      ENVIRONMENT: {{deploy-environment}}
