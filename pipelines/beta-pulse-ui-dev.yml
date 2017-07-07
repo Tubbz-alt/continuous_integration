@@ -189,7 +189,7 @@ jobs:
       outputs:
         - name: built-resource
       run:
-        path: ./new-pulse-ui/ci/package-for-deploy.sh
+        path: ./shadowfax/ci/package-for-deploy.sh
   - put: beta-pulse-ui-rc
     params: {file: built-resource/beta-pulse-ui-dev-*.txz}
   - put: version

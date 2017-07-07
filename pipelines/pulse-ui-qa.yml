@@ -152,7 +152,9 @@ jobs:
       params: {save: true}
   - task: build-github-key
     image: git-buildroot-image
-    params: {GITHUB_PRIVATE_KEY: {{github-private-key}}}
+    params:
+      APP_RESOURCE_NAME: {{app-resource-name}}
+      GITHUB_PRIVATE_KEY: {{github-private-key}}
     config:
       platform: linux
       inputs:
