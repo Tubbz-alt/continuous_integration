@@ -26,6 +26,7 @@ git clone build-triggers-resource updated-build-triggers
 pushd updated-build-triggers
   git config --global user.email "nobody@concourse.ci"
   git config --global user.name "Concourse"
+  git pull
   if [ -z "$dependency_diff" ]; then
     # dependencies have not changed; update build.txt to kick off the build
     echo "No dependency changes to push; updating build.txt with latest commit"
